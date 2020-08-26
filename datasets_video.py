@@ -98,10 +98,21 @@ def return_moments(modality):
         os.exit()
     return filename_categories, filename_imglist_train, filename_imglist_val, root_data, prefix
 
+def return_coins(modality):
+    filename_categories = 'coin/category.txt'
+    filename_imglist_train = 'coin/train_segments.txt'
+    filename_imglist_val = 'coin/val_segments.txt'
+    if modality == 'RGB':
+        prefix = '{:06d}.jpg'
+        root_data = 'coin_videos'
+    else:
+        print('no such modality:'+modality)
+        os.exit()
+    return filename_categories, filename_imglist_train, filename_imglist_val, root_data, prefix
 
 def return_dataset(dataset, modality):
     dict_single = {'jester': return_jester, 'something': return_something, 'somethingv2': return_somethingv2,
-                   'charades': return_charades, 'moments': return_moments}
+                   'charades': return_charades, 'moments': return_moments, 'coin':return_coins}
     if dataset in dict_single:
         file_categories, file_imglist_train, file_imglist_val, root_data, prefix = dict_single[dataset](modality)
     else:

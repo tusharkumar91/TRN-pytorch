@@ -30,13 +30,27 @@ def main():
     args.store_name = '_'.join(['TRN', args.dataset, args.modality, args.arch, args.consensus_type, 'segment%d'% args.num_segments])
     print('storing name: ' + args.store_name)
 
-    model = TSN(num_class, args.num_segments, args.modality,
+    model = TSN(2, args.num_segments, args.modality,
                 base_model=args.arch,
                 consensus_type=args.consensus_type,
                 dropout=args.dropout,
                 img_feature_dim=args.img_feature_dim,
                 partial_bn=not args.no_partialbn)
 
+    checkpoint = torch.load('pretrain/TRN_somethingv2_RGB_BNInception_TRNmultiscale_segment8_best.pth.tar', map_location='cpu')
+    base_dict = {'.'.join(k.split('.')[1:]): v for k, v in list(checkpoint['state_dict'].items())}
+    for key in ['consensus.fc_fusion_scales.6.3.bias', 'consensus.fc_fusion_scales.5.3.bias',
+                'consensus.fc_fusion_scales.4.3.bias',
+                'consensus.fc_fusion_scales.3.3.bias', 'consensus.fc_fusion_scales.2.3.bias',
+                'consensus.fc_fusion_scales.1.3.bias',
+                'consensus.fc_fusion_scales.0.3.bias', 'consensus.fc_fusion_scales.6.3.weight',
+                'consensus.fc_fusion_scales.5.3.weight',
+                'consensus.fc_fusion_scales.4.3.weight', 'consensus.fc_fusion_scales.3.3.weight',
+                'consensus.fc_fusion_scales.2.3.weight',
+                'consensus.fc_fusion_scales.1.3.weight', 'consensus.fc_fusion_scales.0.3.weight']:
+        del base_dict[key]
+    # print(base_dict)
+    model.load_state_dict(base_dict, strict=False)
     crop_size = model.crop_size
     scale_size = model.scale_size
     input_mean = model.input_mean
@@ -44,7 +58,7 @@ def main():
     policies = model.get_optim_policies()
     train_augmentation = model.get_augmentation()
 
-    model = torch.nn.DataParallel(model, device_ids=args.gpus).cuda()
+    model = torch.nn.DataParallel(model)
 
     if args.resume:
         if os.path.isfile(args.resume):
@@ -85,25 +99,25 @@ def main():
         batch_size=args.batch_size, shuffle=True,
         num_workers=args.workers, pin_memory=True)
 
-    val_loader = torch.utils.data.DataLoader(
-        TSNDataSet(args.root_path, args.val_list, num_segments=args.num_segments,
-                   new_length=data_length,
-                   modality=args.modality,
-                   image_tmpl=prefix,
-                   random_shift=False,
-                   transform=torchvision.transforms.Compose([
-                       GroupScale(int(scale_size)),
-                       GroupCenterCrop(crop_size),
-                       Stack(roll=(args.arch in ['BNInception','InceptionV3'])),
-                       ToTorchFormatTensor(div=(args.arch not in ['BNInception','InceptionV3'])),
-                       normalize,
-                   ])),
-        batch_size=args.batch_size, shuffle=False,
-        num_workers=args.workers, pin_memory=True)
+    # val_loader = torch.utils.data.DataLoader(
+    #     TSNDataSet(args.root_path, args.val_list, num_segments=args.num_segments,
+    #                new_length=data_length,
+    #                modality=args.modality,
+    #                image_tmpl=prefix,
+    #                random_shift=False,
+    #                transform=torchvision.transforms.Compose([
+    #                    GroupScale(int(scale_size)),
+    #                    GroupCenterCrop(crop_size),
+    #                    Stack(roll=(args.arch in ['BNInception','InceptionV3'])),
+    #                    ToTorchFormatTensor(div=(args.arch not in ['BNInception','InceptionV3'])),
+    #                    normalize,
+    #                ])),
+    #     batch_size=args.batch_size, shuffle=False,
+    #     num_workers=args.workers, pin_memory=True)
 
     # define loss function (criterion) and optimizer
     if args.loss_type == 'nll':
-        criterion = torch.nn.CrossEntropyLoss().cuda()
+        criterion = torch.nn.CrossEntropyLoss()
     else:
         raise ValueError("Unknown loss type")
 
@@ -112,13 +126,13 @@ def main():
             group['name'], len(group['params']), group['lr_mult'], group['decay_mult'])))
 
     optimizer = torch.optim.SGD(policies,
-                                args.lr,
+                                0.0001,
                                 momentum=args.momentum,
                                 weight_decay=args.weight_decay)
 
-    if args.evaluate:
-        validate(val_loader, model, criterion, 0)
-        return
+    # if args.evaluate:
+    #     validate(val_loader, model, criterion, 0)
+    #     return
 
     log_training = open(os.path.join(args.root_log, '%s.csv' % args.store_name), 'w')
     for epoch in range(args.start_epoch, args.epochs):
@@ -128,18 +142,18 @@ def main():
         train(train_loader, model, criterion, optimizer, epoch, log_training)
 
         # evaluate on validation set
-        if (epoch + 1) % args.eval_freq == 0 or epoch == args.epochs - 1:
-            prec1 = validate(val_loader, model, criterion, (epoch + 1) * len(train_loader), log_training)
-
-            # remember best prec@1 and save checkpoint
-            is_best = prec1 > best_prec1
-            best_prec1 = max(prec1, best_prec1)
-            save_checkpoint({
-                'epoch': epoch + 1,
-                'arch': args.arch,
-                'state_dict': model.state_dict(),
-                'best_prec1': best_prec1,
-            }, is_best)
+        # if (epoch + 1) % args.eval_freq == 0 or epoch == args.epochs - 1:
+        #     prec1 = validate(val_loader, model, criterion, (epoch + 1) * len(train_loader), log_training)
+        #
+        #     # remember best prec@1 and save checkpoint
+        #     is_best = prec1 > best_prec1
+        #     best_prec1 = max(prec1, best_prec1)
+        #     save_checkpoint({
+        #         'epoch': epoch + 1,
+        #         'arch': args.arch,
+        #         'state_dict': model.state_dict(),
+        #         'best_prec1': best_prec1,
+        #     }, is_best)
 
 
 def train(train_loader, model, criterion, optimizer, epoch, log):
@@ -162,19 +176,23 @@ def train(train_loader, model, criterion, optimizer, epoch, log):
         # measure data loading time
         data_time.update(time.time() - end)
 
-        target = target.cuda(async=True)
+        target = target
         input_var = torch.autograd.Variable(input)
-        target_var = torch.autograd.Variable(target)
-
+        target_var = torch.autograd.Variable(target).long()
+        print(input_var.shape)
+    
         # compute output
         output = model(input_var)
+        #print(torch.nn.Sigmoid()(output))
+        print(target_var)
         loss = criterion(output, target_var)
 
         # measure accuracy and record loss
-        prec1, prec5 = accuracy(output.data, target, topk=(1,5))
-        losses.update(loss.data[0], input.size(0))
-        top1.update(prec1[0], input.size(0))
-        top5.update(prec5[0], input.size(0))
+        # prec1, prec5 = accuracy(output.data, target, topk=(1,5))
+        print(loss.item())
+        losses.update(loss.item(), input.size(0))
+        # top1.update(prec1[0], input.size(0))
+        # top5.update(prec5[0], input.size(0))
 
 
         # compute gradient and do SGD step
@@ -207,58 +225,58 @@ def train(train_loader, model, criterion, optimizer, epoch, log):
             log.flush()
 
 
-
-def validate(val_loader, model, criterion, iter, log):
-    batch_time = AverageMeter()
-    losses = AverageMeter()
-    top1 = AverageMeter()
-    top5 = AverageMeter()
-
-    # switch to evaluate mode
-    model.eval()
-
-    end = time.time()
-    for i, (input, target) in enumerate(val_loader):
-        target = target.cuda(async=True)
-        input_var = torch.autograd.Variable(input, volatile=True)
-        target_var = torch.autograd.Variable(target, volatile=True)
-
-        # compute output
-        output = model(input_var)
-        loss = criterion(output, target_var)
-
-        # measure accuracy and record loss
-        prec1, prec5 = accuracy(output.data, target, topk=(1,5))
-
-        losses.update(loss.data[0], input.size(0))
-        top1.update(prec1[0], input.size(0))
-        top5.update(prec5[0], input.size(0))
-
-        # measure elapsed time
-        batch_time.update(time.time() - end)
-        end = time.time()
-
-        if i % args.print_freq == 0:
-            output = ('Test: [{0}/{1}]\t'
-                  'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-                  'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
-                  'Prec@1 {top1.val:.3f} ({top1.avg:.3f})\t'
-                  'Prec@5 {top5.val:.3f} ({top5.avg:.3f})'.format(
-                   i, len(val_loader), batch_time=batch_time, loss=losses,
-                   top1=top1, top5=top5))
-            print(output)
-            log.write(output + '\n')
-            log.flush()
-
-    output = ('Testing Results: Prec@1 {top1.avg:.3f} Prec@5 {top5.avg:.3f} Loss {loss.avg:.5f}'
-          .format(top1=top1, top5=top5, loss=losses))
-    print(output)
-    output_best = '\nBest Prec@1: %.3f'%(best_prec1)
-    print(output_best)
-    log.write(output + ' ' + output_best + '\n')
-    log.flush()
-
-    return top1.avg
+#
+# def validate(val_loader, model, criterion, iter, log):
+#     batch_time = AverageMeter()
+#     losses = AverageMeter()
+#     top1 = AverageMeter()
+#     top5 = AverageMeter()
+#
+#     # switch to evaluate mode
+#     model.eval()
+#
+#     end = time.time()
+#     for i, (input, target) in enumerate(val_loader):
+#         target = target.cuda(async=True)
+#         input_var = torch.autograd.Variable(input, volatile=True)
+#         target_var = torch.autograd.Variable(target, volatile=True)
+#
+#         # compute output
+#         output = model(input_var)
+#         loss = criterion(output, target_var)
+#
+#         # measure accuracy and record loss
+#         prec1, prec5 = accuracy(output.data, target, topk=(1,5))
+#
+#         losses.update(loss.data[0], input.size(0))
+#         top1.update(prec1[0], input.size(0))
+#         top5.update(prec5[0], input.size(0))
+#
+#         # measure elapsed time
+#         batch_time.update(time.time() - end)
+#         end = time.time()
+#
+#         if i % args.print_freq == 0:
+#             output = ('Test: [{0}/{1}]\t'
+#                   'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
+#                   'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
+#                   'Prec@1 {top1.val:.3f} ({top1.avg:.3f})\t'
+#                   'Prec@5 {top5.val:.3f} ({top5.avg:.3f})'.format(
+#                    i, len(val_loader), batch_time=batch_time, loss=losses,
+#                    top1=top1, top5=top5))
+#             print(output)
+#             log.write(output + '\n')
+#             log.flush()
+#
+#     output = ('Testing Results: Prec@1 {top1.avg:.3f} Prec@5 {top5.avg:.3f} Loss {loss.avg:.5f}'
+#           .format(top1=top1, top5=top5, loss=losses))
+#     print(output)
+#     output_best = '\nBest Prec@1: %.3f'%(best_prec1)
+#     print(output_best)
+#     log.write(output + ' ' + output_best + '\n')
+#     log.flush()
+#
+#     return top1.avg
 
 
 def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):

@@ -1,6 +1,6 @@
 import argparse
 parser = argparse.ArgumentParser(description="PyTorch implementation of Temporal Segment Networks")
-parser.add_argument('dataset', type=str, choices=['something','jester','moments', 'somethingv2'])
+parser.add_argument('dataset', type=str, choices=['something','jester','moments', 'somethingv2', 'coin'])
 parser.add_argument('modality', type=str, choices=['RGB', 'Flow'])
 parser.add_argument('--train_list', type=str,default="")
 parser.add_argument('--val_list', type=str, default="")
@@ -29,7 +29,7 @@ parser.add_argument('--lr_steps', default=[50, 100], type=float, nargs="+",
                     metavar='LRSteps', help='epochs to decay learning rate by 10')
 parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
                     help='momentum')
-parser.add_argument('--weight-decay', '--wd', default=5e-4, type=float,
+parser.add_argument('--weight-decay', '--wd', default=5e-5, type=float,
                     metavar='W', help='weight decay (default: 5e-4)')
 parser.add_argument('--clip-gradient', '--gd', default=20, type=float,
                     metavar='W', help='gradient norm clipping (default: disabled)')

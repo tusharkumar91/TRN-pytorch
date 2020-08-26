@@ -10,7 +10,7 @@ import functools
 import subprocess
 import numpy as np
 from PIL import Image
-import moviepy.editor as mpy
+#import moviepy.editor as mpy
 
 import torchvision
 import torch.nn.parallel
@@ -97,17 +97,27 @@ num_class = len(categories)
 args.arch = 'InceptionV3' if args.dataset == 'moments' else 'BNInception'
 
 # Load model.
-net = TSN(num_class,
+net = TSN(2,
           args.test_segments,
           args.modality,
           base_model=args.arch,
           consensus_type=args.consensus_type,
           img_feature_dim=args.img_feature_dim, print_spec=False)
 
-checkpoint = torch.load(args.weights)
+checkpoint = torch.load(args.weights, map_location='cpu')
 base_dict = {'.'.join(k.split('.')[1:]): v for k, v in list(checkpoint['state_dict'].items())}
-net.load_state_dict(base_dict)
-net.cuda().eval()
+for key in ['consensus.fc_fusion_scales.6.3.bias', 'consensus.fc_fusion_scales.5.3.bias', 'consensus.fc_fusion_scales.4.3.bias',
+            'consensus.fc_fusion_scales.3.3.bias', 'consensus.fc_fusion_scales.2.3.bias', 'consensus.fc_fusion_scales.1.3.bias',
+            'consensus.fc_fusion_scales.0.3.bias', 'consensus.fc_fusion_scales.6.3.weight', 'consensus.fc_fusion_scales.5.3.weight',
+            'consensus.fc_fusion_scales.4.3.weight', 'consensus.fc_fusion_scales.3.3.weight', 'consensus.fc_fusion_scales.2.3.weight',
+            'consensus.fc_fusion_scales.1.3.weight', 'consensus.fc_fusion_scales.0.3.weight']:
+    del base_dict[key]
+#print(base_dict)
+net.load_state_dict(base_dict, strict=False)
+
+#print(net)
+#exit(0)
+net.eval()
 
 # Initialize frame transforms.
 transform = torchvision.transforms.Compose([
@@ -117,36 +127,52 @@ transform = torchvision.transforms.Compose([
     transforms.GroupNormalize(net.input_mean, net.input_std),
 ])
 
-# Obtain video frames
-if args.frame_folder is not None:
-    print('Loading frames in {}'.format(args.frame_folder))
-    import glob
-    # Here, make sure after sorting the frame paths have the correct temporal order
-    frame_paths = sorted(glob.glob(os.path.join(args.frame_folder, '*.jpg')))
-    frames = load_frames(frame_paths)
-else:
-    print('Extracting frames using ffmpeg...')
-    frames = extract_frames(args.video_file, args.test_segments)
-
-
-# Make video prediction.
-data = transform(frames)
-input = data.view(-1, 3, data.size(1), data.size(2)).unsqueeze(0).cuda()
-
-with torch.no_grad():
-    logits = net(input)
-    h_x = torch.mean(F.softmax(logits, 1), dim=0).data
-    probs, idx = h_x.sort(0, True)
-
-# Output the prediction.
-video_name = args.frame_folder if args.frame_folder is not None else args.video_file
-print('RESULT ON ' + video_name)
-for i in range(0, 5):
-    print('{:.3f} -> {}'.format(probs[i], categories[idx[i]]))
-
+outputs = [0]*56
+import glob
+video_dir = '../../NymbleData/segments/*.mp4'
+for video_file_name in sorted(glob.glob(video_dir)):
+    
+    video_file = video_file_name
+    index = int(video_file_name.split('/')[-1].split('.')[0])
+    print(video_file_name, index)
+    # Obtain video frames
+    if args.frame_folder is not None:
+        print('Loading frames in {}'.format(args.frame_folder))
+        import glob
+        # Here, make sure after sorting the frame paths have the correct temporal order
+        frame_paths = sorted(glob.glob(os.path.join(args.frame_folder, '*.jpg')))
+        frames = load_frames(frame_paths)
+    else:
+        print('Extracting frames using ffmpeg...')
+        frames = extract_frames(video_file, args.test_segments)
+    
+    
+    # Make video prediction.
+    data = transform(frames)
+    input = data.view(-1, 3, data.size(1), data.size(2)).unsqueeze(0)
+    
+    with torch.no_grad():
+        logits = net(input)
+        h_x = torch.mean(F.sigmoid(logits), dim=0).data
+        probs, idx = h_x.sort(0, True)
+    print(h_x)
+    # Output the prediction.
+    video_name = args.frame_folder if args.frame_folder is not None else video_file
+    print('RESULT ON ' + video_name)
+    top5 = []
+    exit(0)
+    for i in range(0, 5):
+        print('{:.3f} -> {}'.format(probs[i], categories[idx[i]]))
+        top5.append((probs[i].item(), categories[idx[i]]))
+    outputs[index] = top5
+    print('---------')
+    # print(outputs)
+    exit(0)
+# import pickle
+# pickle.dump(outputs, open('somethingv1_1.pkl', 'wb'))
 # Render output frames with prediction text.
-if args.rendered_output is not None:
-    prediction = categories[idx[0]]
-    rendered_frames = render_frames(frames, prediction)
-    clip = mpy.ImageSequenceClip(rendered_frames, fps=4)
-    clip.write_videofile(args.rendered_output)
+#if args.rendered_output is not None:
+#    prediction = categories[idx[0]]
+#    rendered_frames = render_frames(frames, prediction)
+#    clip = mpy.ImageSequenceClip(rendered_frames, fps=4)
+#    clip.write_videofile(args.rendered_output)

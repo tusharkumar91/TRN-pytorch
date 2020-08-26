@@ -3,6 +3,7 @@ import torch.utils.data as data
 from PIL import Image
 import os
 import os.path
+import torchvision
 import numpy as np
 from numpy.random import randint
 
@@ -136,3 +137,4 @@ class TSNDataSet(data.Dataset):
 
     def __len__(self):
         return len(self.video_list)
+
