@@ -11,7 +11,7 @@ import subprocess
 import numpy as np
 from PIL import Image
 #import moviepy.editor as mpy
-
+import torch
 import torchvision
 import torch.nn.parallel
 import torch.optim
@@ -104,58 +104,89 @@ net = TSN(2,
           consensus_type=args.consensus_type,
           img_feature_dim=args.img_feature_dim, print_spec=False)
 
-checkpoint = torch.load(args.weights, map_location='cpu')
-base_dict = {'.'.join(k.split('.')[1:]): v for k, v in list(checkpoint['state_dict'].items())}
-for key in ['consensus.fc_fusion_scales.6.3.bias', 'consensus.fc_fusion_scales.5.3.bias', 'consensus.fc_fusion_scales.4.3.bias',
-            'consensus.fc_fusion_scales.3.3.bias', 'consensus.fc_fusion_scales.2.3.bias', 'consensus.fc_fusion_scales.1.3.bias',
-            'consensus.fc_fusion_scales.0.3.bias', 'consensus.fc_fusion_scales.6.3.weight', 'consensus.fc_fusion_scales.5.3.weight',
-            'consensus.fc_fusion_scales.4.3.weight', 'consensus.fc_fusion_scales.3.3.weight', 'consensus.fc_fusion_scales.2.3.weight',
-            'consensus.fc_fusion_scales.1.3.weight', 'consensus.fc_fusion_scales.0.3.weight']:
-    del base_dict[key]
-#print(base_dict)
-net.load_state_dict(base_dict, strict=False)
-
-#print(net)
-#exit(0)
-net.eval()
-
-# Initialize frame transforms.
-transform = torchvision.transforms.Compose([
-    transforms.GroupOverSample(net.input_size, net.scale_size),
-    transforms.Stack(roll=(args.arch in ['BNInception', 'InceptionV3'])),
-    transforms.ToTorchFormatTensor(div=(args.arch not in ['BNInception', 'InceptionV3'])),
-    transforms.GroupNormalize(net.input_mean, net.input_std),
-])
-
-outputs = [0]*56
+net = torch.nn.DataParallel(net)
 import glob
-video_dir = '../../NymbleData/segments/*.mp4'
-for video_file_name in sorted(glob.glob(video_dir)):
+
+
+checkpoint_names = glob.glob('checkpoint_*.pth')
+save_acc_dict = {}
+best_acc = 0.0
+best_cp = None
+torch.manual_seed(1111)
+import pickle 
+from tqdm import tqdm
+for checkpoint_name in tqdm(checkpoint_names):
+    checkpoint = torch.load(checkpoint_name)
+    print(checkpoint_name)
+    """
+    base_dict = {'.'.join(k.split('.')[1:]): v for k, v in list(checkpoint['state_dict'].items())}
+    for key in ['consensus.fc_fusion_scales.6.3.bias', 'consensus.fc_fusion_scales.5.3.bias', 'consensus.fc_fusion_scales.4.3.bias',
+    'consensus.fc_fusion_scales.3.3.bias', 'consensus.fc_fusion_scales.2.3.bias', 'consensus.fc_fusion_scales.1.3.bias',
+    'consensus.fc_fusion_scales.0.3.bias', 'consensus.fc_fusion_scales.6.3.weight', 'consensus.fc_fusion_scales.5.3.weight',
+    'consensus.fc_fusion_scales.4.3.weight', 'consensus.fc_fusion_scales.3.3.weight', 'consensus.fc_fusion_scales.2.3.weight',
+    'consensus.fc_fusion_scales.1.3.weight', 'consensus.fc_fusion_scales.0.3.weight']:
+    del base_dict[key]
+    #print(base_dict)
+    """
+    #net.load_state_dict(base_dict, strict=False)
+    net.load_state_dict(checkpoint, strict=True)
+    #print(net)
+    #exit(0)
+    net.eval()
+    net.cuda()
+
+    # Initialize frame transforms.
+    transform = torchvision.transforms.Compose([
+        transforms.GroupOverSample(net.module.input_size, net.module.scale_size),
+        transforms.Stack(roll=(args.arch in ['BNInception', 'InceptionV3'])),
+        transforms.ToTorchFormatTensor(div=(args.arch not in ['BNInception', 'InceptionV3'])),
+        transforms.GroupNormalize(net.module.input_mean, net.module.input_std),
+    ])
+
+    segments_gt = [0, 0, 1, 1, 0, 0, 0,
+                   0, 0, 1, 1, 1, 1, 0,
+                   1, 0, 0, 0, 0, 0, 0,
+                   1, 1, 1, 0, 0, 0, 0,
+                   1, 1, 1, 0, 0, 1, 1,
+                   2, 2, 0, 0, 1, 1, 1,
+                   0, 0, 0, 0, 2]
     
-    video_file = video_file_name
-    index = int(video_file_name.split('/')[-1].split('.')[0])
-    print(video_file_name, index)
-    # Obtain video frames
-    if args.frame_folder is not None:
-        print('Loading frames in {}'.format(args.frame_folder))
-        import glob
-        # Here, make sure after sorting the frame paths have the correct temporal order
-        frame_paths = sorted(glob.glob(os.path.join(args.frame_folder, '*.jpg')))
-        frames = load_frames(frame_paths)
-    else:
-        print('Extracting frames using ffmpeg...')
-        frames = extract_frames(video_file, args.test_segments)
-    
-    
-    # Make video prediction.
-    data = transform(frames)
-    input = data.view(-1, 3, data.size(1), data.size(2)).unsqueeze(0)
-    
-    with torch.no_grad():
-        logits = net(input)
-        h_x = torch.mean(F.sigmoid(logits), dim=0).data
-        probs, idx = h_x.sort(0, True)
-    print(h_x)
+
+    pred = [2]* len(segments_gt)
+    video_dir = 'segments_2_slow/*.mp4'
+    for video_file_name in sorted(glob.glob(video_dir)):
+        print('best acc : {}, best cp : {}'.format(best_acc, best_cp))
+        video_file = video_file_name
+        index = int(video_file_name.split('/')[-1].split('_')[-1].split('.')[0])
+        print(video_file_name, index)
+        # Obtain video frames
+        if args.frame_folder is not None:
+            print('Loading frames in {}'.format(args.frame_folder))
+            # Here, make sure after sorting the frame paths have the correct temporal order
+            frame_paths = sorted(glob.glob(os.path.join(args.frame_folder, '*.jpg')))
+            frames = load_frames(frame_paths)
+        else:
+            try:
+                print('Extracting frames using ffmpeg...')
+                frames = extract_frames(video_file, args.test_segments)
+            except:
+                continue
+        # Make video prediction.
+        data = transform(frames)
+        input = data.view(-1, 3, data.size(1), data.size(2)).unsqueeze(0)
+        pred_index = 2
+        with torch.no_grad():
+            logits = net(input.cuda())
+            h_x = torch.mean(F.sigmoid(logits), dim=0).data
+            probs, idx = h_x.sort(0, True)
+        print(h_x)
+        if h_x[0] >= 0.5 and h_x[0] > h_x[1]:
+            pred_index = 0
+        elif h_x[1] >= 0.5 and h_x[1] > h_x[0]:
+            pred_index = 1
+        pred[index // 6] = pred_index
+        continue
+    """
     # Output the prediction.
     video_name = args.frame_folder if args.frame_folder is not None else video_file
     print('RESULT ON ' + video_name)
@@ -168,8 +199,15 @@ for video_file_name in sorted(glob.glob(video_dir)):
     print('---------')
     # print(outputs)
     exit(0)
-# import pickle
-# pickle.dump(outputs, open('somethingv1_1.pkl', 'wb'))
+    """
+    acc = np.sum(np.array(segments_gt) == np.array(pred)) / len(segments_gt)
+    save_acc_dict[checkpoint_name] = acc
+    print(acc)
+    if acc > best_acc:
+        best_acc = acc
+        best_cp = checkpoint_name
+
+    pickle.dump(save_acc_dict, open('saved_acc_dict.pkl', 'wb'))
 # Render output frames with prediction text.
 #if args.rendered_output is not None:
 #    prediction = categories[idx[0]]
