@@ -9,6 +9,15 @@
 #
 import os
 import pdb
+
+
+import pickle
+add = pickle.load(open('/home/tusharkurochester/segment_add_info.pkl', 'rb'))
+#mix = pickle.load(open('segment_add_info.pkl', 'rb'))
+print(add)
+for info in add:
+    print(info)
+exit(0)
 dataset_name = 'something-something-v1' # 'jester-v1'
 with open('%s-labels.csv'% dataset_name) as f:
     lines = f.readlines()

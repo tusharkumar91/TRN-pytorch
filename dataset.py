@@ -3,6 +3,7 @@ import torch.utils.data as data
 from PIL import Image
 import os
 import os.path
+import torch
 import torchvision
 import numpy as np
 from numpy.random import randint
@@ -122,7 +123,6 @@ class TSNDataSet(data.Dataset):
         return self.get(record, segment_indices)
 
     def get(self, record, indices):
-
         images = list()
         for seg_ind in indices:
             p = int(seg_ind)
@@ -133,7 +133,12 @@ class TSNDataSet(data.Dataset):
                     p += 1
 
         process_data = self.transform(images)
-        return process_data, record.label
+        if record.label == 1:
+            label = torch.FloatTensor(np.array([0, 1]))
+        else:
+            label = torch.FloatTensor(np.array([1, 0]))
+
+        return process_data, label
 
     def __len__(self):
         return len(self.video_list)

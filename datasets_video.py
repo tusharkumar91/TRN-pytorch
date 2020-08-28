@@ -103,8 +103,8 @@ def return_coins(modality):
     filename_imglist_train = 'coin/train_segments.txt'
     filename_imglist_val = 'coin/val_segments.txt'
     if modality == 'RGB':
-        prefix = '{:06d}.jpg'
-        root_data = 'coin_videos'
+        prefix = '{:05d}.jpg'
+        root_data = ''
     else:
         print('no such modality:'+modality)
         os.exit()

@@ -58,7 +58,7 @@ def main():
     policies = model.get_optim_policies()
     train_augmentation = model.get_augmentation()
 
-    model = torch.nn.DataParallel(model)
+    model = torch.nn.DataParallel(model).cuda()
 
     if args.resume:
         if os.path.isfile(args.resume):
@@ -117,14 +117,20 @@ def main():
 
     # define loss function (criterion) and optimizer
     if args.loss_type == 'nll':
-        criterion = torch.nn.CrossEntropyLoss()
+        weight = torch.ones([2]).cuda()
+        weight[0] = 1.2
+        pos_weight = torch.ones([2]).cuda()
+        #pos_weight[0] = 2
+        criterion = torch.nn.BCEWithLogitsLoss(weight = weight, pos_weight=pos_weight).cuda() 
+        #criterion = torch.nn.CrossEntropyLoss().cuda()
+        
     else:
         raise ValueError("Unknown loss type")
 
     for group in policies:
         print(('group: {} has {} params, lr_mult: {}, decay_mult: {}'.format(
             group['name'], len(group['params']), group['lr_mult'], group['decay_mult'])))
-
+        
     optimizer = torch.optim.SGD(policies,
                                 0.0001,
                                 momentum=args.momentum,
@@ -137,10 +143,10 @@ def main():
     log_training = open(os.path.join(args.root_log, '%s.csv' % args.store_name), 'w')
     for epoch in range(args.start_epoch, args.epochs):
         adjust_learning_rate(optimizer, epoch, args.lr_steps)
-
+        torch.save(model.state_dict(), 'checkpoint_bce_20_w12_{}.pth.tar'.format(epoch))
+        torch.save(model.state_dict(), 'checkpoint_bce_20_w12_{}.pth'.format(epoch))
         # train for one epoch
         train(train_loader, model, criterion, optimizer, epoch, log_training)
-
         # evaluate on validation set
         # if (epoch + 1) % args.eval_freq == 0 or epoch == args.epochs - 1:
         #     prec1 = validate(val_loader, model, criterion, (epoch + 1) * len(train_loader), log_training)
@@ -162,6 +168,10 @@ def train(train_loader, model, criterion, optimizer, epoch, log):
     losses = AverageMeter()
     top1 = AverageMeter()
     top5 = AverageMeter()
+    for param in model.parameters():
+        param.requires_grad = False
+    for param in model.module.consensus.parameters():
+        param.requires_grad = True
 
     if args.no_partialbn:
         model.module.partialBN(False)
@@ -170,26 +180,25 @@ def train(train_loader, model, criterion, optimizer, epoch, log):
 
     # switch to train mode
     model.train()
-
     end = time.time()
     for i, (input, target) in enumerate(train_loader):
         # measure data loading time
         data_time.update(time.time() - end)
 
-        target = target
+        target = target.cuda()
         input_var = torch.autograd.Variable(input)
-        target_var = torch.autograd.Variable(target).long()
-        print(input_var.shape)
+        target_var = torch.autograd.Variable(target)
+        #print(input_var.shape)
     
         # compute output
         output = model(input_var)
-        #print(torch.nn.Sigmoid()(output))
-        print(target_var)
+        #print(output)
+        #print(target_var)
         loss = criterion(output, target_var)
 
         # measure accuracy and record loss
         # prec1, prec5 = accuracy(output.data, target, topk=(1,5))
-        print(loss.item())
+        #print(loss.item())
         losses.update(loss.item(), input.size(0))
         # top1.update(prec1[0], input.size(0))
         # top5.update(prec5[0], input.size(0))
@@ -202,15 +211,15 @@ def train(train_loader, model, criterion, optimizer, epoch, log):
 
         if args.clip_gradient is not None:
             total_norm = clip_grad_norm(model.parameters(), args.clip_gradient)
-            if total_norm > args.clip_gradient:
-                print("clipping gradient: {} with coef {}".format(total_norm, args.clip_gradient / total_norm))
+            #if total_norm > args.clip_gradient:
+            #    print("clipping gradient: {} with coef {}".format(total_norm, args.clip_gradient / total_norm))
 
         optimizer.step()
 
         # measure elapsed time
         batch_time.update(time.time() - end)
         end = time.time()
-
+        
         if i % args.print_freq == 0:
             output = ('Epoch: [{0}][{1}/{2}], lr: {lr:.5f}\t'
                     'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
